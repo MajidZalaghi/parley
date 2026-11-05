@@ -12,6 +12,9 @@ export interface SessionState {
   startedAt: string;
   updatedAt: string;
   lastEntry: { entryId: string; itemId: string } | null;
+  /** normal = daily queue; weak = weak cards; note = one source note; free = no schedule changes (F-5). */
+  kind?: "normal" | "weak" | "note" | "free";
+  title?: string;
 }
 
 export interface AiUsageRecord {

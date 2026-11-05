@@ -2,7 +2,8 @@
 
 import { findBlockedWords } from "../parser/text";
 
-export type AiFeature = "draft" | "feedback" | "sentence" | "explain";
+export type AiFeature = "draft" | "feedback" | "sentence" | "explain" | "interview" | "scenario" | "speak" | "weak";
+export const ALL_AI_FEATURES: readonly AiFeature[] = ["draft", "feedback", "sentence", "explain", "interview", "scenario", "speak", "weak"];
 
 export type AiError = "no-key" | "offline" | "blocked-word" | "http" | "quota" | "invalid-reply" | "timeout" | "not-confirmed" | "cap";
 

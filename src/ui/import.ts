@@ -1,14 +1,14 @@
-// BIM import: Files picker and paste, with report and rename suggestions (US-01 to US-04).
+// BIM import (More → Import): Files picker and paste, report and rename suggestions (US-01 to US-04).
 
 import { addAlias, importBim, type ImportInput } from "../app/service";
 import type { ImportResult } from "../bim/importDiff";
 import type { Screen } from "./app";
-import { add, set, button, field, h, toast } from "./dom";
+import { add, button, field, group, h, navBar, row, sectionLabel, set, toast } from "./dom";
 
 export const importScreen: Screen = (root) => {
-  const out = h("div", { class: "report" });
+  const out = h("div", { attrs: { style: "display:flex;flex-direction:column;gap:12px" } });
 
-  const fileInput = h("input", { attrs: { type: "file", multiple: "", accept: ".md,text/markdown,text/plain" } });
+  const fileInput = h("input", { attrs: { type: "file", multiple: "", accept: ".md,text/markdown,text/plain", hidden: "" } });
   fileInput.addEventListener("change", async () => {
     const files = Array.from(fileInput.files ?? []);
     if (!files.length) return;
@@ -17,56 +17,47 @@ export const importScreen: Screen = (root) => {
     fileInput.value = "";
   });
 
-  const source = h("input", { attrs: { type: "text", placeholder: "Note name, e.g. Industry Foundation Classes (IFC)" } });
-  const paste = h("textarea", { attrs: { rows: "8", placeholder: "Paste the English in Action section here" } });
-  const pasteBtn = button("Import pasted text", async () => {
-    if (!source.value.trim() || !paste.value.trim()) { toast("Add the note name and the pasted text."); return; }
-    showResult(out, await importBim([{ source: source.value.trim(), text: paste.value }], "paste"));
-    paste.value = "";
-  }, "btn primary");
+  const source = h("input", { attrs: { type: "text", placeholder: "e.g. Industry Foundation Classes (IFC)" } });
+  const paste = h("textarea", { attrs: { rows: "7", placeholder: "Paste the English in Action section here" } });
 
-  add(root, 
-    h("h1", { text: "Import BIM notes" }),
-    h("section", { class: "panel" },
-      h("h2", { text: "From Files" }),
-      h("p", { class: "muted", text: "Pick one or more .md notes. Only the English in Action section is read." }),
-      fileInput,
-    ),
-    h("section", { class: "panel" },
-      h("h2", { text: "Paste" }),
+  add(root,
+    navBar("More", "#/more", "Import"),
+    h("h1", { class: "large-title", text: "Import BIM notes" }),
+    group(row({ icon: "note", color: "blue", title: "Choose notes from Files", subtitle: "Only the English in Action section is read", onClick: () => fileInput.click() })),
+    fileInput,
+    sectionLabel("Or paste one note"),
+    h("section", { class: "glass" },
       field("Note name", source),
       field("Section text", paste),
-      pasteBtn,
-    ),
+      button("Import pasted text", async () => {
+        if (!source.value.trim() || !paste.value.trim()) { toast("Add the note name and the pasted text."); return; }
+        showResult(out, await importBim([{ source: source.value.trim(), text: paste.value }], "paste"));
+        paste.value = "";
+      }, "btn primary big")),
     out,
   );
 };
 
 function showResult(out: HTMLElement, r: ImportResult) {
-  const line = (label: string, ids: string[]) => (ids.length ? h("p", { text: `${label}: ${ids.length}` }) : null);
   const errors = r.issues.filter((i) => i.severity === "error");
   const warnings = r.issues.filter((i) => i.severity === "warning");
-  const renameBox = h("div");
-  for (const s of r.renames) {
-    const row = h("div", { class: "rename" },
-      h("span", { text: `Was "${s.fromId}" renamed to "${s.toId}"?` }),
-      button("Yes, keep history", async () => {
-        const err = await addAlias(s.fromId, s.toId);
-        toast(err ?? "History linked.");
-        row.remove();
-      }, "btn small primary"),
-      button("No", () => row.remove(), "btn small ghost"),
-    );
-    add(renameBox, row);
-  }
-  set(out, 
-    h("h2", { text: "Import report" }),
-    line("Added", r.added), line("Changed", r.changed), line("Unchanged", r.unchanged),
-    line("Archived", r.archived), line("Restored", r.restored),
-    renameBox,
-    errors.length ? h("h3", { text: `Errors (${errors.length}) — lines skipped` }) : null,
-    ...errors.map((i) => h("p", { class: "issue error", text: `${i.source ?? ""}${i.line ? ` line ${i.line}` : ""} · ${i.code}: ${i.message}`, dir: "auto" })),
-    warnings.length ? h("h3", { text: `Warnings (${warnings.length})` }) : null,
-    ...warnings.map((i) => h("p", { class: "issue warn", text: `${i.source ?? ""}${i.line ? ` line ${i.line}` : ""} · ${i.code}: ${i.message}`, dir: "auto" })),
-  );
+  const n = (label: string, ids: string[]) => row({ title: label, value: String(ids.length) });
+  const renames = r.renames.map((s) => {
+    const box = h("section", { class: "glass" });
+    add(box,
+      h("p", { text: `Was “${s.fromId}” renamed to “${s.toId}”?` }),
+      h("div", { class: "row-btns" },
+        button("Yes, keep history", async () => { const err = await addAlias(s.fromId, s.toId); toast(err ?? "History linked."); box.remove(); }, "btn primary small"),
+        button("No", () => box.remove(), "btn small")));
+    return box;
+  });
+  const line = (i: (typeof r.issues)[number]) => h("p", { class: `issue${i.severity === "error" ? " error" : ""}`, dir: "auto", text: `${i.source ?? ""}${i.line ? ` · line ${i.line}` : ""} · ${i.code}: ${i.message}` });
+  set(out,
+    sectionLabel("Import report"),
+    group(n("Added", r.added), n("Changed", r.changed), n("Unchanged", r.unchanged), n("Archived", r.archived), n("Restored", r.restored)),
+    ...renames,
+    errors.length ? sectionLabel(`Errors · ${errors.length} lines skipped`) : null,
+    ...errors.map(line),
+    warnings.length ? sectionLabel(`Warnings · ${warnings.length}`) : null,
+    ...warnings.map(line));
 }

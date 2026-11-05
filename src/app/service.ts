@@ -54,8 +54,8 @@ export async function snapshot(): Promise<Snapshot> {
   return { ...all, cardById: new Map(all.cards.map((c) => [c.id, c])), states, settings };
 }
 
-export function queueFor(s: Snapshot, deck: DeckChoice, now = new Date()) {
-  return buildQueue(s.cards, s.states, queueSettingsFrom(s.settings), deck, now);
+export function queueFor(s: Snapshot, deck: DeckChoice, now = new Date(), source?: string) {
+  return buildQueue(s.cards, s.states, queueSettingsFrom(s.settings), deck, now, source);
 }
 
 // ---------- reviews ----------
@@ -253,6 +253,49 @@ export async function applyRestore(file: BackupFile, plan: MergePlan, choices: M
   await seqStore.put({ key: "seq", value: Math.max(cur, restoredMax) });
   await tx.done;
   invalidateSettings();
+}
+
+// ---------- sessions ----------
+
+export async function startSession(itemIds: string[], deck: "bim" | "general" | "both", kind: "normal" | "weak" | "note" | "free", title?: string): Promise<void> {
+  const now = new Date().toISOString();
+  await (await db()).put("session", { key: "current", itemIds, pos: 0, deck, startedAt: now, updatedAt: now, lastEntry: null, kind, ...(title ? { title } : {}) });
+}
+
+// ---------- AI scenario and interview history ----------
+
+export async function saveAiScenario(s: { context: string; turns: Card["turns"] }): Promise<Card> {
+  const base = { deck: "general" as Deck, kind: "scenario" as const, context: s.context, turns: s.turns, archived: false };
+  const hash = await contentHashOf(base);
+  const card: Card = {
+    ...base,
+    id: `gen:scenario:${hash.slice(0, 10)}`,
+    origin: "ai-draft",
+    source: "AI scenario",
+    otherSources: [],
+    createdDate: today(),
+    contentHash: hash,
+    updatedAt: new Date().toISOString(),
+    baseHash: null,
+    extraUsages: [],
+  };
+  await (await db()).put("cards", card);
+  return card;
+}
+
+export interface InterviewSummary {
+  at: string;
+  topic: string;
+  verdicts: string[];
+}
+
+export async function addInterviewSummary(s: InterviewSummary): Promise<void> {
+  const list = (await getMeta<InterviewSummary[]>("interviewHistory")) ?? [];
+  await setMeta("interviewHistory", [s, ...list].slice(0, 100));
+}
+
+export async function interviewHistory(): Promise<InterviewSummary[]> {
+  return (await getMeta<InterviewSummary[]>("interviewHistory")) ?? [];
 }
 
 export function cardModesLabel(mode: Mode): string {

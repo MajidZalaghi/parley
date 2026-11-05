@@ -35,8 +35,12 @@ export function dayStart(now: Date, rolloverHour: number): Date {
   return d;
 }
 
-function modesFor(card: Card, deckModes: Mode[]): Mode[] {
-  if (card.kind === "scenario") return deckModes.includes("roleplay") ? ["roleplay"] : [];
+export function modesFor(card: Card, deckModes: Mode[]): Mode[] {
+  if (card.kind === "scenario") {
+    if (card.modes && !card.modes.includes("roleplay")) return [];
+    // General-section scenarios are saved by the user from AI-F, so they always use role-play.
+    return card.deck === "general" || deckModes.includes("roleplay") ? ["roleplay"] : [];
+  }
   const enabled = card.modes ?? deckModes;
   return enabled.filter((m) => m !== "roleplay" && (m !== "cloze" || card.clozeOk !== false));
 }
@@ -47,6 +51,7 @@ export function buildQueue(
   s: QueueSettings,
   deck: DeckChoice,
   now: Date,
+  source?: string,
 ): { items: QueueItem[]; counts: DayCounts } {
   const start = dayStart(now, s.rolloverHour).getTime();
   const nowMs = now.getTime();
@@ -75,6 +80,7 @@ export function buildQueue(
   const sorted = [...cards].sort((a, b) => a.createdDate.localeCompare(b.createdDate) || a.id.localeCompare(b.id));
   for (const c of sorted) {
     if (c.archived || !decks.includes(c.deck)) continue;
+    if (source && c.source !== source && !c.otherSources.includes(source)) continue;
     for (const mode of modesFor(c, s.modes[c.deck])) {
       const itemId = itemIdOf(c.id, mode);
       const st = states.get(itemId);
@@ -104,7 +110,7 @@ export function buildQueue(
 }
 
 function unlocked(card: Card, mode: Mode, states: ReadonlyMap<string, ItemState>, dayStartMs: number, reviewedBySource: Map<string, number>): boolean {
-  if (card.kind === "scenario") return (reviewedBySource.get(card.source) ?? 0) >= 2;
+  if (card.kind === "scenario") return card.origin !== "vault" || (reviewedBySource.get(card.source) ?? 0) >= 2;
   if (mode !== "produce" || card.clozeOk === false) return true;
   // produce unlocks the day after the first successful cloze review.
   const cloze = states.get(itemIdOf(card.id, "cloze"));

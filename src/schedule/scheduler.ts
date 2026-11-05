@@ -97,6 +97,26 @@ export function replay(logs: readonly ReviewLogEntry[], aliases: readonly AliasE
   return out;
 }
 
+/** Due date for each rating if the item were rated now (shown on the rating buttons). */
+export function previewDue(state: FsrsCard | null, at: Date, settings: FsrsSettings): Record<1 | 2 | 3 | 4, Date> {
+  const scheduler = makeScheduler(settings);
+  const card: FsrsCard = state ?? createEmptyCard<FsrsCard>(at);
+  const out = {} as Record<1 | 2 | 3 | 4, Date>;
+  for (const r of [1, 2, 3, 4] as const) out[r] = scheduler.next(card, at, r as Grade).card.due;
+  return out;
+}
+
+/** Short label for an interval: "10 min", "5 h", "3 d", "2 mo". */
+export function intervalLabel(from: Date, to: Date): string {
+  const min = Math.max(1, Math.round((to.getTime() - from.getTime()) / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} h`;
+  const d = Math.round(h / 24);
+  if (d < 60) return `${d} d`;
+  return `${Math.round(d / 30)} mo`;
+}
+
 /** Applies one new rating to an existing state (used live; replay gives the same result). */
 export function applyRating(state: FsrsCard | null, at: Date, rating: Grade, settings: FsrsSettings): FsrsCard {
   const scheduler = makeScheduler(settings);

@@ -1,5 +1,6 @@
 // Settings with defaults (data-model §9). Each key is stored as { key, value, updatedAt }.
 
+import { ALL_AI_FEATURES, type AiFeature } from "../ai/provider";
 import type { Deck, Mode } from "../model/types";
 import type { Preset } from "../review/queue";
 import { DEFAULT_PROMPT_TEMPLATE } from "../general/prompt";
@@ -26,12 +27,17 @@ export interface Settings {
   "backup.reminderDays": number;
   "ai.provider": "gemini";
   "ai.model": string;
-  "ai.features": ("draft" | "feedback" | "sentence" | "explain")[];
+  /** Features switched off by the user; every other feature is on (new features start on). */
+  "ai.featuresOff": AiFeature[];
   "ai.paidTierConfirmed": boolean;
   "ai.maxOutputTokens.draft": number;
   "ai.maxOutputTokens.feedback": number;
   "ai.maxOutputTokens.sentence": number;
   "ai.maxOutputTokens.explain": number;
+  "ai.maxOutputTokens.interview": number;
+  "ai.maxOutputTokens.scenario": number;
+  "ai.maxOutputTokens.speak": number;
+  "ai.maxOutputTokens.weak": number;
   "ai.monthlyRequestCap": number;
   "ai.priceInputPerM": number;
   "ai.priceOutputPerM": number;
@@ -58,12 +64,16 @@ export const DEFAULTS: Settings = {
   "backup.reminderDays": 7,
   "ai.provider": "gemini",
   "ai.model": "gemini-3.1-flash-lite",
-  "ai.features": ["draft", "feedback", "sentence", "explain"],
+  "ai.featuresOff": [],
   "ai.paidTierConfirmed": false,
   "ai.maxOutputTokens.draft": 1500,
   "ai.maxOutputTokens.feedback": 400,
   "ai.maxOutputTokens.sentence": 100,
   "ai.maxOutputTokens.explain": 400,
+  "ai.maxOutputTokens.interview": 600,
+  "ai.maxOutputTokens.scenario": 900,
+  "ai.maxOutputTokens.speak": 300,
+  "ai.maxOutputTokens.weak": 900,
   "ai.monthlyRequestCap": 500,
   "ai.priceInputPerM": 0.25,
   "ai.priceOutputPerM": 1.5,
@@ -87,4 +97,9 @@ export async function setSetting<K extends keyof Settings>(key: K, value: Settin
 
 export function invalidateSettings(): void {
   cache = null;
+}
+
+export function enabledAiFeatures(s: Settings): AiFeature[] {
+  const off = new Set(s["ai.featuresOff"]);
+  return ALL_AI_FEATURES.filter((f) => !off.has(f));
 }

@@ -1,7 +1,7 @@
 // Runs one AI request: guards, timeout, usage counting (data-model §6.4). Never logs text or the key.
 
 import { addAiUsage, getAiUsage, getApiKey } from "../store/db";
-import { loadSettings } from "../store/settings";
+import { enabledAiFeatures, loadSettings } from "../store/settings";
 import { makeGemini } from "./gemini";
 import { guard, type AiRequest, type AiResult } from "./provider";
 
@@ -20,7 +20,7 @@ export async function runAi(req: AiRequest): Promise<AiResult<string>> {
     blockedWords: s["privacy.blockedWords"],
     requestsThisMonth: usage.requests,
     monthlyCap: s["ai.monthlyRequestCap"],
-    enabledFeatures: s["ai.features"],
+    enabledFeatures: enabledAiFeatures(s),
   });
   if (blocked) return { ok: false, ...blocked };
 
