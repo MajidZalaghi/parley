@@ -3,7 +3,7 @@
 // No card text, prompts or keys are included in the copied results.
 
 import { openDB } from "idb";
-import { buildGeminiBody, extractText, GEMINI_API_REVISION, GEMINI_ENDPOINT } from "../src/ai/gemini";
+import { buildGeminiBody, extractText, GEMINI_ENDPOINT, geminiHeaders } from "../src/ai/gemini";
 import { FEEDBACK_SCHEMA, parseFeedback } from "../src/ai/features";
 import { copyText, englishVoices, isStandalone, saveFile, speak } from "../src/platform/platform";
 
@@ -140,7 +140,7 @@ async function callGemini(json: boolean) {
   try {
     const resp = await fetch(GEMINI_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key, "Api-Revision": GEMINI_API_REVISION },
+      headers: geminiHeaders(key),
       body: JSON.stringify(buildGeminiBody(req, "gemini-3.1-flash-lite")),
     });
     const ms = Math.round(performance.now() - t0);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { feedbackRequest, parseFeedback, parseSentence } from "../src/ai/features";
-import { buildGeminiBody, extractText, makeGemini } from "../src/ai/gemini";
+import { buildGeminiBody, CORS_ALLOWED_HEADERS, extractText, makeGemini } from "../src/ai/gemini";
 import { guard, type GuardContext } from "../src/ai/provider";
 import { buildPrompt, DEFAULT_PROMPT_TEMPLATE, previewReply } from "../src/general/prompt";
 import type { InboxEntry } from "../src/model/types";
@@ -42,6 +42,9 @@ describe("Gemini request (AC-28)", () => {
     const body = JSON.parse(String(s.init.body));
     expect(Object.keys(body).sort()).toEqual(["generation_config", "input", "model", "response_format", "store", "system_instruction"]);
     expect(body.store).toBe(false);
+    // Only headers the Gemini CORS preflight accepts (Api-Revision is rejected with 403).
+    const sent = Object.keys(s.init.headers as Record<string, string>).map((h) => h.toLowerCase()).sort();
+    expect(sent).toEqual([...CORS_ALLOWED_HEADERS].sort());
     expect(String(s.init.body)).not.toContain("secret-123");
     if (r.ok) expect(parseFeedback(r.value)?.verdict).toBe("ok");
   });

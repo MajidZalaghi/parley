@@ -5,7 +5,17 @@
 import type { AiProvider, AiRequest, AiResult } from "./provider";
 
 export const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
-export const GEMINI_API_REVISION = "2026-05-20";
+
+/**
+ * Browser-safe headers only. The CORS preflight on generativelanguage.googleapis.com allows
+ * `content-type` and `x-goog-api-key`, but rejects `Api-Revision` with 403 (checked 2026-11-05),
+ * so that header must never be sent from the app.
+ */
+export const CORS_ALLOWED_HEADERS = ["content-type", "x-goog-api-key"] as const;
+
+export function geminiHeaders(key: string): Record<string, string> {
+  return { "Content-Type": "application/json", "x-goog-api-key": key };
+}
 
 export function buildGeminiBody(req: AiRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -45,7 +55,7 @@ export function makeGemini(model: string, fetchImpl: typeof fetch = fetch): AiPr
       try {
         resp = await fetchImpl(GEMINI_ENDPOINT, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": key, "Api-Revision": GEMINI_API_REVISION },
+          headers: geminiHeaders(key),
           body: JSON.stringify(buildGeminiBody(req, model)),
           signal,
         });
