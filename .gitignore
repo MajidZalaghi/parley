@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dev-dist/
+*.local
+.env
+.env.*
+# Never commit backups or real vault content
+parley-backup-*.json
+
+# Personal planning documents stay on this PC only (not in the public repo)
+docs/
