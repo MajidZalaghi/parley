@@ -10,6 +10,7 @@ import { copyText, englishVoices, isStandalone, requestPersistence, saveFile, st
 import { getAiUsage, getApiKey, getMeta, setApiKey } from "../store/db";
 import { enabledAiFeatures, invalidateSettings, loadSettings, setSetting, type Settings } from "../store/settings";
 import type { Screen } from "./app";
+import { runDraftingTest } from "./diagnose";
 import { add, button, fa, field, group, h, largeHeader, navBar, row, sectionLabel, set, toast, toggle } from "./dom";
 
 export const moreScreen: Screen = async (root) => {
@@ -165,6 +166,7 @@ export const settingsScreen: Screen = async (root, go) => {
 
   const keyInput = h("input", { attrs: { type: "password", placeholder: key ? "•••••••• saved" : "Paste Gemini API key", autocomplete: "off", "aria-label": "Gemini API key" } });
   const keyStatus = h("p", { class: "muted small" });
+  const testBox = h("div", { attrs: { style: "display:flex;flex-direction:column;gap:8px" } });
   const model = h("input", { attrs: { type: "text", "aria-label": "Model" } }); model.value = s["ai.model"];
   model.addEventListener("change", () => void setSetting("ai.model", model.value.trim() || "gemini-3.1-flash-lite"));
   const blocked = h("textarea", { attrs: { rows: "3", placeholder: "One per line: client names, project names…", "aria-label": "Blocked words" } });
@@ -203,7 +205,9 @@ export const settingsScreen: Screen = async (root, go) => {
         }, "btn small"),
         key ? button("Delete key", async () => { await setApiKey(null); toast("Key deleted."); go("settings"); }, "btn small ghost") : null),
       keyStatus,
-      field("Model", model)),
+      field("Model", model),
+      button("Run drafting test", () => void runDraftingTest(testBox), "btn small"),
+      testBox),
     group(row({ title: "Billing is enabled (paid tier)", subtitle: "AI stays off until you confirm", trailing: toggle(s["ai.paidTierConfirmed"], (v) => setSetting("ai.paidTierConfirmed", v), "Paid tier confirmed") })),
     sectionLabel("AI features"),
     group(...featureRows),

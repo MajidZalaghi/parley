@@ -171,12 +171,11 @@ function renderPreview(box: HTMLElement, text: string, entries: InboxEntry[], bl
     ...extra.map((m) => m.el),
     p.missing.length ? h("p", { class: "issue", text: `No card returned for: ${p.missing.map((e) => e.word).join(", ")}` }) : null,
     ...p.issues.filter((i) => i.severity === "error").map((i) => h("p", { class: "issue error", text: `Line ${i.line} · ${i.code}: ${i.message}` })),
-    found === 0
-      ? h("div", { attrs: { style: "display:flex;flex-direction:column;gap:8px" } },
-          h("p", { class: "error", text: "No card lines found in the reply." }),
-          h("details", { class: "group row" },
-            h("summary", {}, h("b", { text: "Show what came back" })),
-            h("p", { class: "small", dir: "auto", text: text.trim().slice(0, 1500) || "(empty reply)" })))
+    found === 0 ? h("p", { class: "error", text: text.trim() ? "No card lines found in the reply." : "The reply was empty." }) : null,
+    found < entries.filter((e) => e.status === "waiting").length || found === 0
+      ? h("details", { class: "group row" },
+          h("summary", {}, h("b", { text: "Show what came back" })),
+          h("p", { class: "small", dir: "auto", text: text.trim().slice(0, 1500) || "(empty reply)" }))
       : null,
     button("Done", () => go("inbox"), "btn big"));
 }

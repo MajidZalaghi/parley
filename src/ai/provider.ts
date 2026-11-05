@@ -8,7 +8,7 @@ export const ALL_AI_FEATURES: readonly AiFeature[] = ["draft", "feedback", "sent
 export type AiError = "no-key" | "offline" | "blocked-word" | "http" | "quota" | "invalid-reply" | "timeout" | "not-confirmed" | "cap";
 
 export type AiResult<T> =
-  | { ok: true; value: T; inputTokens: number; outputTokens: number }
+  | { ok: true; value: T; inputTokens: number; outputTokens: number; thoughtTokens?: number }
   | { ok: false; error: AiError; status?: number; detail?: string };
 
 export interface AiRequest {
@@ -55,7 +55,7 @@ export function errorMessage(e: AiError, detail?: string): string {
     case "blocked-word": return `Not sent: contains a blocked word (${detail ?? ""}).`;
     case "http": return `Gemini returned an error${detail ? `: ${detail}` : ""}.`;
     case "quota": return "Gemini quota or rate limit reached. Try later.";
-    case "invalid-reply": return "Gemini's reply could not be read.";
+    case "invalid-reply": return `Gemini's reply could not be read${detail ? ` (${detail})` : ""}.`;
     case "timeout": return "Gemini did not answer in 20 seconds.";
     case "cap": return detail ?? "Monthly request cap reached.";
     case "not-confirmed": return detail ?? "AI is not enabled.";

@@ -32,7 +32,7 @@ export function buildGeminiBody(req: AiRequest, model: string): Record<string, u
 interface InteractionResponse {
   status?: string;
   steps?: { type?: string; content?: { type?: string; text?: string }[] }[];
-  usage?: { total_input_tokens?: number; total_output_tokens?: number };
+  usage?: { total_input_tokens?: number; total_output_tokens?: number; total_thought_tokens?: number };
   errors?: { code?: string; message?: string }[];
   error?: { message?: string; status?: string };
 }
@@ -72,12 +72,17 @@ export function makeGemini(model: string, fetchImpl: typeof fetch = fetch): AiPr
       if (resp.status === 429) return { ok: false, error: "quota", status: 429 };
       if (!resp.ok) return { ok: false, error: "http", status: resp.status, detail: `HTTP ${resp.status}` };
       const text = extractText(json);
-      if (text === null || json.status === "failed") return { ok: false, error: "invalid-reply", status: resp.status };
+      if (json.status === "failed") return { ok: false, error: "invalid-reply", status: resp.status, detail: `status ${json.status}` };
+      if (text === null || !text.trim()) {
+        const t = json.usage?.total_thought_tokens;
+        return { ok: false, error: "invalid-reply", status: resp.status, detail: `empty answer${t ? `; ${t} thinking tokens used` : ""}` };
+      }
       return {
         ok: true,
         value: text,
         inputTokens: json.usage?.total_input_tokens ?? 0,
         outputTokens: json.usage?.total_output_tokens ?? 0,
+        ...(json.usage?.total_thought_tokens ? { thoughtTokens: json.usage.total_thought_tokens } : {}),
       };
     },
   };

@@ -2,6 +2,7 @@
 
 import { addAlias, importBim, type ImportInput } from "../app/service";
 import type { ImportResult } from "../bim/importDiff";
+import { splitNotes } from "../bim/split";
 import type { Screen } from "./app";
 import { add, button, field, group, h, navBar, row, sectionLabel, set, toast } from "./dom";
 
@@ -12,7 +13,8 @@ export const importScreen: Screen = (root) => {
   fileInput.addEventListener("change", async () => {
     const files = Array.from(fileInput.files ?? []);
     if (!files.length) return;
-    const inputs: ImportInput[] = await Promise.all(files.map(async (f) => ({ source: f.name.replace(/\.md$/i, ""), text: await f.text() })));
+    // One file may hold several notes ("# Name" headings); see src/bim/split.ts.
+    const inputs: ImportInput[] = (await Promise.all(files.map(async (f) => splitNotes(await f.text(), f.name.replace(/\.md$/i, ""))))).flat();
     showResult(out, await importBim(inputs, "file"));
     fileInput.value = "";
   });
@@ -25,13 +27,15 @@ export const importScreen: Screen = (root) => {
     h("h1", { class: "large-title", text: "Import BIM notes" }),
     group(row({ icon: "note", color: "blue", title: "Choose notes from Files", subtitle: "Only the English in Action section is read", onClick: () => fileInput.click() })),
     fileInput,
-    sectionLabel("Or paste one note"),
+    sectionLabel("Or paste text"),
     h("section", { class: "glass" },
-      field("Note name", source),
+      field("Note name", source, "Not needed when you paste a pack whose notes start with “# Name”."),
       field("Section text", paste),
       button("Import pasted text", async () => {
-        if (!source.value.trim() || !paste.value.trim()) { toast("Add the note name and the pasted text."); return; }
-        showResult(out, await importBim([{ source: source.value.trim(), text: paste.value }], "paste"));
+        if (!paste.value.trim()) { toast("Paste the text first."); return; }
+        const parts = splitNotes(paste.value, source.value.trim());
+        if (parts.length === 1 && !source.value.trim()) { toast("Add the note name, or paste a pack whose notes start with “# Name”."); return; }
+        showResult(out, await importBim(parts, "paste"));
         paste.value = "";
       }, "btn primary big")),
     out,

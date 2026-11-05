@@ -96,6 +96,60 @@ export function parseTermLine(rawLine: string, lineNo: number, allowAltMarkers =
   return { kind: "term", term: { id, term, meaning, usage: q.text, clozeOk, line: lineNo }, issues };
 }
 
+// ---------- lenient term lines (AI replies only) ----------
+
+// The term may be in backticks, **bold**, *italic*, quotes, or bare. Labels are case-insensitive.
+const LENIENT_RE = /^(?:`([^`]+)`|\*\*`?([^*`|]+?)`?\*\*|\*([^*|]+)\*|["“]([^"”|]+)["”]|([^|`*"“]+?))\s*\|\s*Meaning\s*:\s*(.*?)\s*\|\s*Usage\s*:\s*(.*)$/i;
+
+/**
+ * Parses a card line from an AI reply. A line with a Meaning or Usage label but a broken shape is an error;
+ * a line with neither label is chatter and is ignored. Chat models often drop the "- " marker, bold the term, omit the
+ * backticks or add text after the closing quote, so this accepts those shapes. Vault notes keep using the
+ * strict parseTermLine. 
+ */
+export function parseLenientTermLine(rawLine: string, lineNo: number): TermLineResult {
+  let line = rawLine.trim();
+  if (!line || !/(?:Meaning|Usage)\s*:/i.test(line)) return { kind: "none" }; // no label at all: chatter
+  const issues: Issue[] = [];
+  const marker = /^(?:[-*•–]|\d+[.)])\s+/.exec(line);
+  if (marker) {
+    if (marker[0].trim() !== "-") issues.push(issue("W-09", lineNo, "List marker normalised."));
+    line = line.slice(marker[0].length);
+  }
+  const m = LENIENT_RE.exec(line);
+  if (!m) {
+    issues.push(issue("E-01", lineNo, "Line does not match: `term` | Meaning: ... | Usage: \"...\""));
+    return { kind: "error", issues };
+  }
+  const term = normalizeText(m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? "");
+  const meaning = normalizeText(m[6] ?? "");
+
+  let u = (m[7] ?? "").trim();
+  let tidied = false;
+  if (u.startsWith('"') || u.startsWith("“")) {
+    u = u.slice(1);
+    const close = Math.max(u.lastIndexOf('"'), u.lastIndexOf("”"));
+    if (close >= 0) { if (close !== u.length - 1) tidied = true; u = u.slice(0, close); } else tidied = true;
+    if (rawLine.includes("“") || rawLine.includes("”")) tidied = true;
+  } else {
+    tidied = true; // no quotes at all
+  }
+  const usage = normalizeText(u);
+  if (tidied) issues.push(issue("W-02", lineNo, "Usage quotes normalised."));
+  if (!meaning || !usage) {
+    issues.push(issue("E-03", lineNo, !meaning ? "Meaning is empty." : "Usage is empty."));
+    return { kind: "error", issues };
+  }
+  const id = slugify(term);
+  if (!id) {
+    issues.push(issue("E-04", lineNo, `Term "${term}" gives an empty ID.`));
+    return { kind: "error", issues };
+  }
+  const clozeOk = findCloze(term, usage) !== null;
+  if (!clozeOk) issues.push(issue("W-03", lineNo, `"${term}" is not in its Usage sentence; cloze disabled.`));
+  return { kind: "term", term: { id, term, meaning, usage, clozeOk, line: lineNo }, issues };
+}
+
 // ---------- scenario ----------
 
 function parseScenarioBlock(lines: Line[], scenarioId: string): { scenario: ParsedScenario | null; issues: Issue[] } {
@@ -303,7 +357,7 @@ export function parseAiReply(text: string, blockedWords: readonly string[] = [])
   const terms: ParsedTerm[] = [];
   const seen = new Set<string>();
   splitLines(text).forEach((raw, i) => {
-    const r = parseTermLine(raw, i + 1, true);
+    const r = parseLenientTermLine(raw, i + 1);
     if (r.kind === "none") return;
     issues.push(...r.issues);
     if (r.kind !== "term") return;
