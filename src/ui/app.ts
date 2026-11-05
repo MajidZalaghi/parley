@@ -6,16 +6,16 @@ import { h, icon, set } from "./dom";
 export type ScreenName =
   | "today" | "practice" | "inbox" | "progress" | "more"
   | "review" | "cards" | "backup" | "settings" | "status" | "import"
-  | "interview" | "scenario" | "speak" | "reminder" | "notes";
+  | "interview" | "scenario" | "speak" | "reminder" | "notes" | "waiting" | "categories";
 export type Go = (s: ScreenName, query?: Record<string, string>) => void;
 export type Screen = (root: HTMLElement, go: Go, query: URLSearchParams) => Promise<void> | void;
 
 const TABS: { name: ScreenName; label: string; icon: string; owns: ScreenName[] }[] = [
   { name: "today", label: "Today", icon: "today", owns: [] },
   { name: "practice", label: "Practice", icon: "practice", owns: ["interview", "scenario", "speak", "notes"] },
-  { name: "inbox", label: "Inbox", icon: "inbox", owns: [] },
+  { name: "inbox", label: "Inbox", icon: "inbox", owns: ["waiting"] },
   { name: "progress", label: "Progress", icon: "progress", owns: [] },
-  { name: "more", label: "More", icon: "more", owns: ["cards", "backup", "settings", "status", "import", "reminder"] },
+  { name: "more", label: "More", icon: "more", owns: ["cards", "backup", "settings", "status", "import", "reminder", "categories"] },
 ];
 const FULL_SCREEN: ScreenName[] = ["review"];
 const AI_SCREENS: ScreenName[] = ["practice", "interview", "scenario", "speak"];

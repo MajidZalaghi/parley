@@ -55,7 +55,7 @@ export const progressScreen: Screen = async (root, go) => {
       ? group(
           ...st.weak.slice(0, 5).map((w) => row({ title: w.card.term ?? `Scenario · ${w.card.source}`, value: `${w.again} × Again` })),
           h("div", { class: "row static", attrs: { style: "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px" } },
-            button("Review 10", async () => { await startSession(weakItemIds(st.weak, snap.states), "both", "weak", "Weak cards"); go("review"); }, "btn primary"),
+            button("Review 10", async () => { await startSession(weakItemIds(st.weak, snap.states), "weak", "Weak cards"); go("review"); }, "btn primary"),
             aiButton("New sentences", "weak", async () => {
               if (!weakTerms.length) { toast("No weak term cards."); return; }
               set(weakBox, spinnerLine("Asking Gemini…"));

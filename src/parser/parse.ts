@@ -12,6 +12,7 @@ const TERM_PREFIX_RE = /^- `([^`]+)`\s*\|\s*Meaning:\s*(.*?)\s*\|\s*Usage:\s*(.*
 const CONTEXT_RE = /^>\s*\[!quote\]\s*Context:\s*(.+)$/;
 const TURN_RE = /^>\s*\*\*([^*]+?):\*\*\s*(.+)$/;
 const CREATED_RE = /^Created:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/;
+const CATEGORY_RE = /^Category:\s*["']?(.+?)["']?\s*$/;
 
 interface Line {
   n: number; // 1-based
@@ -96,59 +97,90 @@ export function parseTermLine(rawLine: string, lineNo: number, allowAltMarkers =
   return { kind: "term", term: { id, term, meaning, usage: q.text, clozeOk, line: lineNo }, issues };
 }
 
-// ---------- lenient term lines (AI replies only) ----------
+// ---------- card lines from AI replies and external tools ----------
 
-// The term may be in backticks, **bold**, *italic*, quotes, or bare. Labels are case-insensitive.
-const LENIENT_RE = /^(?:`([^`]+)`|\*\*`?([^*`|]+?)`?\*\*|\*([^*|]+)\*|["“]([^"”|]+)["”]|([^|`*"“]+?))\s*\|\s*Meaning\s*:\s*(.*?)\s*\|\s*Usage\s*:\s*(.*)$/i;
+// Labels of the universal card line (revision 5) and the earlier Meaning/Usage line. Case-insensitive.
+const LABELS: Record<string, "definition" | "ipa" | "example" | "meaning"> = {
+  definition: "definition", ipa: "ipa", pronunciation: "ipa", example: "example", usage: "example", meaning: "meaning", persian: "meaning",
+};
+const LABEL_SPLIT = /\s*\|\s*(?=(?:Definition|IPA|Pronunciation|Example|Usage|Meaning|Persian)\s*:)/i;
+const ANY_LABEL = /(?:Definition|IPA|Pronunciation|Example|Usage|Meaning|Persian)\s*:/i;
+
+/** Removes wrappers around a term: backticks, **bold**, *italic*, quotes. */
+function cleanTerm(s: string): string {
+  return normalizeText(s.trim().replace(/^[`*"“'_\s]+|[`*"”'_\s]+$/g, ""));
+}
+
+/** Text between the first quote and the last quote; reports when anything had to be tidied. */
+function tidyQuoted(raw: string): { text: string; tidied: boolean } {
+  let u = raw.trim();
+  let tidied = /[“”]/.test(u);
+  if (u.startsWith('"') || u.startsWith("“")) {
+    u = u.slice(1);
+    const close = Math.max(u.lastIndexOf('"'), u.lastIndexOf("”"));
+    if (close >= 0) { if (close !== u.length - 1) tidied = true; u = u.slice(0, close); } else tidied = true;
+  } else tidied = true;
+  return { text: normalizeText(u), tidied };
+}
 
 /**
- * Parses a card line from an AI reply. A line with a Meaning or Usage label but a broken shape is an error;
- * a line with neither label is chatter and is ignored. Chat models often drop the "- " marker, bold the term, omit the
- * backticks or add text after the closing quote, so this accepts those shapes. Vault notes keep using the
- * strict parseTermLine. 
+ * Parses one card line written by Gemini, a local model or any chat:
+ *   - `term` | Definition: ... | IPA: /.../ | Example: "..." | Meaning: <Persian>
+ * Fields may come in any order; the earlier "Meaning | Usage" line is read too. The "- " marker, backticks
+ * and quotes are optional. A line with no label is chatter (ignored); a line with labels but no usable
+ * term, example, or definition/meaning is an error. Vault notes keep using the strict parseTermLine.
  */
-export function parseLenientTermLine(rawLine: string, lineNo: number): TermLineResult {
+export function parseCardLine(rawLine: string, lineNo: number): TermLineResult {
   let line = rawLine.trim();
-  if (!line || !/(?:Meaning|Usage)\s*:/i.test(line)) return { kind: "none" }; // no label at all: chatter
+  if (!line || !ANY_LABEL.test(line)) return { kind: "none" };
   const issues: Issue[] = [];
   const marker = /^(?:[-*•–]|\d+[.)])\s+/.exec(line);
   if (marker) {
     if (marker[0].trim() !== "-") issues.push(issue("W-09", lineNo, "List marker normalised."));
     line = line.slice(marker[0].length);
   }
-  const m = LENIENT_RE.exec(line);
-  if (!m) {
-    issues.push(issue("E-01", lineNo, "Line does not match: `term` | Meaning: ... | Usage: \"...\""));
+  const parts = line.split(LABEL_SPLIT);
+  const term = cleanTerm(parts[0] ?? "");
+  if (parts.length < 2 || !term || ANY_LABEL.test(parts[0] ?? "")) {
+    issues.push(issue("E-01", lineNo, "Line does not match: `term` | Definition: ... | IPA: ... | Example: \"...\" | Meaning: ..."));
     return { kind: "error", issues };
   }
-  const term = normalizeText(m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? "");
-  const meaning = normalizeText(m[6] ?? "");
-
-  let u = (m[7] ?? "").trim();
-  let tidied = false;
-  if (u.startsWith('"') || u.startsWith("“")) {
-    u = u.slice(1);
-    const close = Math.max(u.lastIndexOf('"'), u.lastIndexOf("”"));
-    if (close >= 0) { if (close !== u.length - 1) tidied = true; u = u.slice(0, close); } else tidied = true;
-    if (rawLine.includes("“") || rawLine.includes("”")) tidied = true;
-  } else {
-    tidied = true; // no quotes at all
+  const f: Partial<Record<"definition" | "ipa" | "example" | "meaning", string>> = {};
+  for (const seg of parts.slice(1)) {
+    const m = /^([A-Za-z]+)\s*:\s*(.*)$/s.exec(seg.trim());
+    const key = m ? LABELS[m[1]!.toLowerCase()] : undefined;
+    if (key && m) f[key] = m[2]!.trim();
   }
-  const usage = normalizeText(u);
-  if (tidied) issues.push(issue("W-02", lineNo, "Usage quotes normalised."));
-  if (!meaning || !usage) {
-    issues.push(issue("E-03", lineNo, !meaning ? "Meaning is empty." : "Usage is empty."));
+  if (f.example === undefined || (f.definition === undefined && f.meaning === undefined)) {
+    issues.push(issue("E-01", lineNo, f.example === undefined ? "Missing Example (or Usage)." : "Missing Definition or Meaning."));
     return { kind: "error", issues };
   }
+  const ex = tidyQuoted(f.example);
+  if (ex.tidied) issues.push(issue("W-02", lineNo, "Example quotes normalised."));
+  const definition = normalizeText((f.definition ?? "").replace(/^["“]|["”]$/g, ""));
+  const meaning = normalizeText(f.meaning ?? "");
+  if (!ex.text || (!definition && !meaning)) {
+    issues.push(issue("E-03", lineNo, !ex.text ? "Example is empty." : "Definition and Meaning are empty."));
+    return { kind: "error", issues };
+  }
+  let ipa = normalizeText(f.ipa ?? "");
+  if (ipa && !/^[/[]/.test(ipa)) ipa = `/${ipa.replace(/^\/|\/$/g, "")}/`;
   const id = slugify(term);
   if (!id) {
     issues.push(issue("E-04", lineNo, `Term "${term}" gives an empty ID.`));
     return { kind: "error", issues };
   }
-  const clozeOk = findCloze(term, usage) !== null;
-  if (!clozeOk) issues.push(issue("W-03", lineNo, `"${term}" is not in its Usage sentence; cloze disabled.`));
-  return { kind: "term", term: { id, term, meaning, usage, clozeOk, line: lineNo }, issues };
+  const clozeOk = findCloze(term, ex.text) !== null;
+  if (!clozeOk) issues.push(issue("W-03", lineNo, `"${term}" is not in its example; cloze disabled.`));
+  return {
+    kind: "term",
+    term: { id, term, meaning, usage: ex.text, clozeOk, line: lineNo, ...(definition ? { definition } : {}), ...(ipa ? { ipa } : {}) },
+    issues,
+  };
 }
+
+/** Earlier name, kept for callers and tests: AI replies are read with parseCardLine. */
+export const parseLenientTermLine = parseCardLine;
 
 // ---------- scenario ----------
 
@@ -197,16 +229,19 @@ function parseScenarioBlock(lines: Line[], scenarioId: string): { scenario: Pars
 
 // ---------- section detection ----------
 
-function stripFrontMatter(lines: Line[]): { body: Line[]; created: string | null } {
-  if (lines[0]?.text.trim() !== "---") return { body: lines, created: null };
+function stripFrontMatter(lines: Line[]): { body: Line[]; created: string | null; category: string | null } {
+  if (lines[0]?.text.trim() !== "---") return { body: lines, created: null, category: null };
   let created: string | null = null;
+  let category: string | null = null;
   for (let i = 1; i < lines.length; i++) {
     const t = lines[i]!.text;
-    if (t.trim() === "---") return { body: lines.slice(i + 1), created };
+    if (t.trim() === "---") return { body: lines.slice(i + 1), created, category };
     const m = CREATED_RE.exec(t.trim());
     if (m) created = m[1] ?? null;
+    const c = CATEGORY_RE.exec(t.trim());
+    if (c) category = normalizeText(c[1] ?? "") || null;
   }
-  return { body: lines, created: null }; // unterminated front matter: treat as body
+  return { body: lines, created: null, category: null }; // unterminated front matter: treat as body
 }
 
 /** Marks lines inside fenced code blocks so headings there are ignored. */
@@ -275,7 +310,7 @@ function subSections(section: Line[]): { terms: Line[] | null; scenario: Line[] 
 export function parseNote(text: string, opts: ParseOptions): ParsedNote {
   const issues: Issue[] = [];
   const all: Line[] = splitLines(text).map((t, i) => ({ n: i + 1, text: t }));
-  const { body, created } = stripFrontMatter(all);
+  const { body, created, category } = stripFrontMatter(all);
   if (!created && opts.mode === "file") issues.push(issue("W-01", null, "Missing or invalid Created; import date used."));
   const createdDate = created ?? opts.today;
 
@@ -284,7 +319,7 @@ export function parseNote(text: string, opts: ParseOptions): ParsedNote {
   if (!section) {
     if (opts.mode === "file") {
       issues.push(issue("W-07", null, "No '## English in Action' section."));
-      return { source: opts.source, createdDate, hasSection, terms: [], scenario: null, issues };
+      return { source: opts.source, createdDate, hasSection, terms: [], scenario: null, issues, ...(category ? { category } : {}) };
     }
     section = body; // paste without heading: whole text is the section (§5.3 rule 6)
   }
@@ -348,7 +383,7 @@ export function parseNote(text: string, opts: ParseOptions): ParsedNote {
   }
 
   for (const i of issues) i.source = opts.source;
-  return { source: opts.source, createdDate, hasSection, terms, scenario, issues };
+  return { source: opts.source, createdDate, hasSection, terms, scenario, issues, ...(category ? { category } : {}) };
 }
 
 /** Parses a General English AI reply: term lines anywhere, other lines ignored silently (data-model §6.3). */
@@ -357,7 +392,7 @@ export function parseAiReply(text: string, blockedWords: readonly string[] = [])
   const terms: ParsedTerm[] = [];
   const seen = new Set<string>();
   splitLines(text).forEach((raw, i) => {
-    const r = parseLenientTermLine(raw, i + 1);
+    const r = parseCardLine(raw, i + 1);
     if (r.kind === "none") return;
     issues.push(...r.issues);
     if (r.kind !== "term") return;

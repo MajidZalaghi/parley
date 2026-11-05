@@ -50,16 +50,16 @@ describe("progress stats (F-1, F-2)", () => {
 });
 
 describe("study by note and AI scenarios in the queue", () => {
-  const settings = { modes: { bim: ["cloze", "produce", "roleplay"] as ("cloze" | "produce" | "roleplay")[], general: ["cloze", "produce"] as ("cloze" | "produce")[] }, newPerDay: { bim: 5, general: 3 }, reviewsPerDay: 80, rolloverHour: 4 };
+  const settings = { modes: ["flashcard", "reverse", "roleplay"] as ("flashcard" | "reverse" | "roleplay")[], newPerDay: 8, reviewsPerDay: 80, rolloverHour: 4 };
   it("filters by source note", async () => {
     const cards = await cardsP;
     const other: Card = { ...cards[0]!, id: "other-term", source: "Other note" };
-    const q = buildQueue([...cards, other], new Map(), settings, "bim", new Date("2026-11-05T12:00:00"), "Other note");
+    const q = buildQueue([...cards, other], new Map(), settings, { source: "Other note" }, new Date("2026-11-05T12:00:00"));
     expect(q.items.map((i) => i.cardId)).toEqual(["other-term"]);
   });
   it("a saved AI scenario in General is reviewable right away", async () => {
     const sc: Card = { id: "gen:scenario:abc", deck: "general", kind: "scenario", origin: "ai-draft", context: "c", turns: [], source: "AI scenario", otherSources: [], createdDate: "2026-11-05", contentHash: "h", updatedAt: "", baseHash: null, archived: false, extraUsages: [] };
-    const q = buildQueue([sc], new Map(), settings, "general", new Date("2026-11-05T12:00:00"));
+    const q = buildQueue([sc], new Map(), settings, {}, new Date("2026-11-05T12:00:00"));
     expect(q.items.map((i) => i.itemId)).toEqual(["gen:scenario:abc::roleplay"]);
   });
 });

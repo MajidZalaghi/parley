@@ -21,6 +21,8 @@ export interface ParsedTerm {
   usage: string;
   clozeOk: boolean;
   line: number;
+  definition?: string;
+  ipa?: string;
 }
 
 export interface ScenarioTurn {
@@ -43,6 +45,8 @@ export interface ParsedNote {
   terms: ParsedTerm[];
   scenario: ParsedScenario | null;
   issues: Issue[];
+  /** From a "Category:" front-matter line, if present. */
+  category?: string;
 }
 
 export function severityOf(code: IssueCode): Severity {

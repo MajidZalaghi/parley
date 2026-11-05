@@ -3,7 +3,7 @@ import { createEmptyCard, fsrs, generatorParameters, type Grade } from "ts-fsrs"
 import { describe, expect, it } from "vitest";
 import { buildBackup, planRestore, verifyBackup, type BackupData } from "../src/backup/merge";
 import { diffImport } from "../src/bim/importDiff";
-import type { AliasEntry, Card, ReviewLogEntry } from "../src/model/types";
+import type { AliasEntry, Card, Mode, ReviewLogEntry } from "../src/model/types";
 import { parseNote } from "../src/parser/parse";
 import { buildQueue } from "../src/review/queue";
 import { DEFAULT_FSRS, liveReviews, replay, wouldCycle } from "../src/schedule/scheduler";
@@ -86,20 +86,29 @@ describe("BIM import diff", () => {
 });
 
 describe("daily queue", () => {
-  it("introduces cloze first, limits new cards, and unlocks produce the next day", async () => {
+  const s = { modes: ["flashcard", "reverse", "roleplay"] as Mode[], newPerDay: 5, reviewsPerDay: 80, rolloverHour: 4 };
+
+  it("introduces flashcards first, limits new items, and unlocks reverse and role-play later", async () => {
     const { upserts: cards } = await diffImport([parsed()], [], "file", "2026-11-05T10:00:00.000Z");
-    const settings = { modes: { bim: ["cloze", "produce", "roleplay"] as const, general: ["cloze", "produce"] as const }, newPerDay: { bim: 5, general: 3 }, reviewsPerDay: 80, rolloverHour: 4 };
-    const s = { ...settings, modes: { bim: [...settings.modes.bim], general: [...settings.modes.general] } };
-    const day1 = buildQueue(cards, new Map(), s, "bim", new Date("2026-11-05T12:00:00"));
-    expect(day1.items.map((i) => i.mode)).toEqual(["cloze", "cloze", "cloze", "cloze", "cloze"]);
+    const day1 = buildQueue(cards, new Map(), s, {}, new Date("2026-11-05T12:00:00"));
+    expect(day1.items.map((i) => i.mode)).toEqual(["flashcard", "flashcard", "flashcard", "flashcard", "flashcard"]);
 
     const logs = day1.items.map((i) => log(i.itemId, 3, new Date("2026-11-05T12:00:00").toISOString()));
     const st = replay(logs, [], DEFAULT_FSRS);
-    const later = buildQueue(cards, st, s, "bim", new Date("2026-11-05T13:00:00"));
+    const later = buildQueue(cards, st, s, {}, new Date("2026-11-05T13:00:00"));
     expect(later.items.filter((i) => i.isNew)).toHaveLength(0); // daily new limit reached
-    const day2 = buildQueue(cards, st, s, "bim", new Date("2026-11-06T12:00:00"));
-    expect(day2.items.some((i) => i.mode === "produce")).toBe(true);
+    const day2 = buildQueue(cards, st, s, {}, new Date("2026-11-06T12:00:00"));
+    expect(day2.items.some((i) => i.mode === "reverse")).toBe(true);
     expect(day2.items.some((i) => i.mode === "roleplay")).toBe(true);
+  });
+
+  it("filters by category; old cards fall back to BIM / General", async () => {
+    const { upserts: cards } = await diffImport([parsed()], [], "file", "2026-11-05T10:00:00.000Z", "Contracts");
+    expect(cards.every((c) => c.category === "Contracts")).toBe(true);
+    const none = buildQueue(cards, new Map(), s, { category: "BIM" }, new Date("2026-11-05T12:00:00"));
+    expect(none.items).toHaveLength(0);
+    const some = buildQueue(cards, new Map(), s, { category: "Contracts" }, new Date("2026-11-05T12:00:00"));
+    expect(some.items.length).toBeGreaterThan(0);
   });
 });
 

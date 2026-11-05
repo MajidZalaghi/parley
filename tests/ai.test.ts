@@ -85,7 +85,7 @@ describe("General English prompt and preview (AC-08, AC-09)", () => {
 
   it("builds the prompt with exactly the waiting words", () => {
     const p = buildPrompt(DEFAULT_PROMPT_TEMPLATE, waiting);
-    expect(p).toContain("1. push back\n2. follow up\n3. touch base");
+    expect(p).toContain("1. push back [General]\n2. follow up [General]\n3. touch base [General]");
     expect(p).not.toContain("{{words}}");
   });
 

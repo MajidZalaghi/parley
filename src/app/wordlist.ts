@@ -1,11 +1,11 @@
-// Writes a bulk word list into the Inbox in one transaction.
+// Writes a bulk word list into the waiting list in one transaction.
 
 import { parseWordList, type WordListResult } from "../general/wordlist";
 import { slugify } from "../parser/text";
 import { db } from "../store/db";
 import { loadSettings } from "../store/settings";
 
-export async function importWordList(text: string): Promise<WordListResult & { added: number }> {
+export async function importWordList(text: string, category?: string): Promise<WordListResult & { added: number }> {
   const s = await loadSettings();
   const d = await db();
   const known = new Set<string>();
@@ -17,7 +17,7 @@ export async function importWordList(text: string): Promise<WordListResult & { a
   for (const [i, e] of r.entries.entries()) {
     await tx.store.put({
       inboxId: crypto.randomUUID(), word: e.word, slug: e.slug, ...(e.seenIn ? { seenIn: e.seenIn } : {}),
-      addedAt: new Date(base + i).toISOString(), status: "waiting",
+      ...(category ? { category } : {}), addedAt: new Date(base + i).toISOString(), status: "waiting",
     });
   }
   await tx.done;

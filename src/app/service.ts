@@ -3,16 +3,16 @@
 import { buildBackup, planRestore, verifyBackup, type BackupFile, type Conflict, type MergePlan } from "../backup/merge";
 import { diffImport, type ImportResult } from "../bim/importDiff";
 import { contentHashOf } from "../model/hash";
-import { itemIdOf, type AliasEntry, type Card, type Deck, type InboxEntry, type Mode, type Rating, type ReviewLogEntry } from "../model/types";
+import { itemIdOf, LEECH_LAPSES, TERM_MODES, type AliasEntry, type Card, type Deck, type InboxEntry, type Mode, type Rating, type ReviewLogEntry } from "../model/types";
 import { parseNote } from "../parser/parse";
 import { findBlockedWords, findCloze, normalizeText, slugify } from "../parser/text";
 import type { ParsedTerm } from "../parser/types";
-import { buildQueue, type DeckChoice, type QueueSettings } from "../review/queue";
+import { buildQueue, type QueueFilter, type QueueSettings } from "../review/queue";
 import { fsrsParamsId, replay, wouldCycle, type FsrsSettings, type ItemState } from "../schedule/scheduler";
 import { db, getMeta, installId, loadAll, nextSeq, setMeta } from "../store/db";
 import { invalidateSettings, loadSettings, type Settings } from "../store/settings";
 
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.2.0";
 
 export const today = () => {
   const d = new Date();
@@ -31,8 +31,8 @@ export function fsrsSettingsFrom(s: Settings): FsrsSettings {
 
 export function queueSettingsFrom(s: Settings): QueueSettings {
   return {
-    modes: { bim: s["bim.modes"], general: s["general.modes"] },
-    newPerDay: { bim: s["bim.newPerDay"], general: s["general.newPerDay"] },
+    modes: s["review.modes"],
+    newPerDay: s["limits.newPerDay"],
     reviewsPerDay: s["limits.reviewsPerDay"],
     rolloverHour: s["day.rolloverHour"],
   };
@@ -54,8 +54,13 @@ export async function snapshot(): Promise<Snapshot> {
   return { ...all, cardById: new Map(all.cards.map((c) => [c.id, c])), states, settings };
 }
 
-export function queueFor(s: Snapshot, deck: DeckChoice, now = new Date(), source?: string) {
-  return buildQueue(s.cards, s.states, queueSettingsFrom(s.settings), deck, now, source);
+export function queueFor(s: Snapshot, filter: QueueFilter = {}, now = new Date()) {
+  return buildQueue(s.cards, s.states, queueSettingsFrom(s.settings), filter, now);
+}
+
+/** A card is a leech when its items were forgotten LEECH_LAPSES times or more (Anki's default). */
+export function isLeech(card: Card, states: Map<string, ItemState>): boolean {
+  return TERM_MODES.some((m) => (states.get(itemIdOf(card.id, m))?.fsrs.lapses ?? 0) >= LEECH_LAPSES);
 }
 
 // ---------- reviews ----------
@@ -105,12 +110,12 @@ export interface ImportInput {
   text: string;
 }
 
-export async function importBim(inputs: ImportInput[], mode: "file" | "paste"): Promise<ImportResult> {
+export async function importBim(inputs: ImportInput[], mode: "file" | "paste", category = "BIM"): Promise<ImportResult> {
   const s = await loadSettings();
   const notes = inputs.map((i) => parseNote(i.text, { source: i.source, mode, today: today(), blockedWords: s["privacy.blockedWords"] }));
   const d = await db();
   const existing = await d.getAll("cards");
-  const result = await diffImport(notes, existing, mode, new Date().toISOString());
+  const result = await diffImport(notes, existing, mode, new Date().toISOString(), category);
   const tx = d.transaction(["cards", "reports"], "readwrite");
   for (const c of result.upserts) await tx.objectStore("cards").put(c);
   await tx.objectStore("reports").put({
@@ -134,7 +139,7 @@ export async function addAlias(fromId: string, toId: string): Promise<string | n
 
 // ---------- General English ----------
 
-export async function addInbox(word: string, seenIn: string): Promise<{ ok: true } | { ok: false; message: string; blocked?: string[] }> {
+export async function addInbox(word: string, seenIn: string, category?: string): Promise<{ ok: true } | { ok: false; message: string; blocked?: string[] }> {
   const w = normalizeText(word);
   const slug = slugify(w);
   if (!slug) return { ok: false, message: "Type a word or phrase." };
@@ -144,6 +149,7 @@ export async function addInbox(word: string, seenIn: string): Promise<{ ok: true
   const entry: InboxEntry = { inboxId: crypto.randomUUID(), word: w, slug, addedAt: new Date().toISOString(), status: "waiting" };
   const seen = normalizeText(seenIn);
   if (seen) entry.seenIn = seen;
+  if (category) entry.category = category;
   await d.put("inbox", entry);
   return { ok: true };
 }
@@ -152,7 +158,9 @@ export function blockedIn(text: string, s: Settings): string[] {
   return findBlockedWords(text, s["privacy.blockedWords"]);
 }
 
-export async function acceptGeneral(t: Pick<ParsedTerm, "term" | "meaning" | "usage">, origin: "ai-draft" | "user", inboxId?: string): Promise<Card> {
+export type CardDraft = Pick<ParsedTerm, "term" | "meaning" | "usage"> & { definition?: string; ipa?: string; category?: string };
+
+export async function acceptGeneral(t: CardDraft, origin: "ai-draft" | "user", inboxId?: string): Promise<Card> {
   const d = await db();
   const id = `gen:${slugify(t.term)}`;
   const now = new Date().toISOString();
@@ -170,6 +178,9 @@ export async function acceptGeneral(t: Pick<ParsedTerm, "term" | "meaning" | "us
     updatedAt: now,
     baseHash: prev?.contentHash ?? null,
     extraUsages: prev?.extraUsages ?? [],
+    category: t.category ?? prev?.category ?? "General",
+    ...(t.definition ? { definition: t.definition } : {}),
+    ...(t.ipa ? { ipa: t.ipa } : {}),
   };
   const tx = d.transaction(["cards", "inbox"], "readwrite");
   await tx.objectStore("cards").put(card);
@@ -179,10 +190,11 @@ export async function acceptGeneral(t: Pick<ParsedTerm, "term" | "meaning" | "us
 }
 
 /** Edits a General card. A changed term becomes a new card plus an alias (data-model §2). */
-export async function editGeneral(card: Card, next: { term: string; meaning: string; usage: string }): Promise<Card> {
+export async function editGeneral(card: Card, next: CardDraft): Promise<Card> {
   const newId = `gen:${slugify(next.term)}`;
-  if (newId === card.id) return acceptGeneral(next, "user");
-  const created = await acceptGeneral(next, "user");
+  const full: CardDraft = { ...next, category: next.category ?? card.category };
+  if (newId === card.id) return acceptGeneral(full, "user");
+  const created = await acceptGeneral(full, "user");
   await archiveCard(card);
   await addAlias(card.id, newId);
   return created;
@@ -195,6 +207,24 @@ export async function archiveCard(card: Card): Promise<void> {
 
 export async function confirmCard(card: Card): Promise<void> {
   await (await db()).put("cards", { ...card, origin: "user" });
+}
+
+/** Category, definition and IPA are not part of the content hash, so they never cause import conflicts. */
+export async function updateCardExtras(card: Card, extras: { category?: string; definition?: string; ipa?: string }): Promise<void> {
+  const d = await db();
+  const cur = (await d.get("cards", card.id)) ?? card;
+  await d.put("cards", { ...cur, ...Object.fromEntries(Object.entries(extras).filter(([, v]) => v !== undefined && v !== "")) });
+}
+
+/** Erases every store. The Gemini key is kept unless keepKey is false (Settings → Erase all data). */
+export async function eraseAllData(keepKey: boolean): Promise<void> {
+  const d = await db();
+  const all = ["cards", "logs", "aliases", "inbox", "settings", "session", "reports", "meta", "aiUsage", "secrets"] as const;
+  const stores = all.filter((st) => !(keepKey && st === "secrets"));
+  const tx = d.transaction(stores, "readwrite");
+  for (const st of stores) await tx.objectStore(st).clear();
+  await tx.done;
+  invalidateSettings();
 }
 
 export async function addExtraUsage(card: Card, text: string, kind: "ai-sentence" | "ai-tip"): Promise<void> {
@@ -257,9 +287,9 @@ export async function applyRestore(file: BackupFile, plan: MergePlan, choices: M
 
 // ---------- sessions ----------
 
-export async function startSession(itemIds: string[], deck: "bim" | "general" | "both", kind: "normal" | "weak" | "note" | "free", title?: string): Promise<void> {
+export async function startSession(itemIds: string[], kind: "normal" | "weak" | "note" | "free", title?: string): Promise<void> {
   const now = new Date().toISOString();
-  await (await db()).put("session", { key: "current", itemIds, pos: 0, deck, startedAt: now, updatedAt: now, lastEntry: null, kind, ...(title ? { title } : {}) });
+  await (await db()).put("session", { key: "current", itemIds, pos: 0, deck: "both", startedAt: now, updatedAt: now, lastEntry: null, kind, ...(title ? { title } : {}) });
 }
 
 // ---------- AI scenario and interview history ----------
@@ -278,6 +308,7 @@ export async function saveAiScenario(s: { context: string; turns: Card["turns"] 
     updatedAt: new Date().toISOString(),
     baseHash: null,
     extraUsages: [],
+    category: "General",
   };
   await (await db()).put("cards", card);
   return card;
@@ -299,7 +330,7 @@ export async function interviewHistory(): Promise<InterviewSummary[]> {
 }
 
 export function cardModesLabel(mode: Mode): string {
-  return { cloze: "Cloze", produce: "Meaning → Term", recognise: "Term → Meaning", roleplay: "Role-play" }[mode];
+  return { flashcard: "Flashcard", reverse: "Reverse", cloze: "Cloze", produce: "Meaning → Term", recognise: "Term → Meaning", roleplay: "Role-play" }[mode];
 }
 
 export { itemIdOf };

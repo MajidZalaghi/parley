@@ -17,7 +17,7 @@ export async function runDraftingTest(box: HTMLElement): Promise<void> {
   const r = await runAi({
     feature: "draft",
     instructions: DRAFT_INSTRUCTIONS,
-    input: buildPrompt(s["general.promptTemplate"], [entry]),
+    input: buildPrompt(s["cards.promptTemplate"], [entry]),
     maxOutputTokens: s["ai.maxOutputTokens.draft"],
   });
   const ms = Math.round(performance.now() - t0);

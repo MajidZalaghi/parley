@@ -179,6 +179,7 @@ describe("AI reply parsing (data-model §6.3)", () => {
     expect(r.terms.map((t) => t.id)).toEqual(["take-something-on-board", "push-back", "follow-up"]);
     expect(codes(r.issues)).toContain("W-09");
     expect(codes(r.issues)).toContain("E-01");
-    expect(codes(r.issues)).toContain("W-03"); // "take something on board" vs "take your comments on board"
+    expect(codes(r.issues)).not.toContain("W-03"); // "take something on board" matches "take your comments on board"
+    expect(r.terms[0]?.clozeOk).toBe(true);
   });
 });

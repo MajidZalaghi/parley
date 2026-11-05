@@ -252,3 +252,61 @@ details.row > *:not(summary) { margin-top: 10px; }
 .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--ai-border); border-top-color: var(--ai-text); animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* ---------- revision 5: flashcards, Persian reveal, motion ---------- */
+.flashcard { min-height: 300px; cursor: pointer; transform-origin: center; transition: transform 0.17s ease-in, opacity 0.18s ease; will-change: transform; }
+.flashcard.flip-out { transform: perspective(900px) rotateY(90deg); }
+.flashcard.flip-in { animation: flip-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes flip-in { from { transform: perspective(900px) rotateY(-90deg); } to { transform: perspective(900px) rotateY(0); } }
+.flashcard.exit-right { transform: translateX(40%) rotate(4deg); opacity: 0; transition: transform 0.18s ease-in, opacity 0.18s ease-in; }
+.flashcard.exit-left { transform: translateX(-40%) rotate(-4deg); opacity: 0; transition: transform 0.18s ease-in, opacity 0.18s ease-in; }
+.front-center { flex: 1; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.term.big { font-size: 34px; line-height: 1.2; }
+.ipa { font-size: 16px; color: var(--text-2); font-family: "Charis SIL", "Doulos SIL", "Lucida Sans Unicode", var(--font); }
+.definition { font-size: 18px; line-height: 1.5; }
+.example { display: flex; align-items: flex-start; gap: 4px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--fill); }
+.example .sentence { flex: 1; font-size: 17px; }
+.badge.cat { background: var(--fill-2); color: var(--text-2); font-weight: 600; }
+.fa-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.fa-btn { font-family: var(--font); }
+.fa-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.reveal { display: grid; grid-template-rows: 0fr; opacity: 0; width: 100%; transition: grid-template-rows 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+.reveal.open { grid-template-rows: 1fr; opacity: 1; }
+.reveal > div { overflow: hidden; }
+.fa-meaning { font-size: 18px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); }
+
+/* Screen entrance: children rise in, slightly staggered. */
+.screen > * { animation: rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.screen > *:nth-child(2) { animation-delay: 0.03s; }
+.screen > *:nth-child(3) { animation-delay: 0.06s; }
+.screen > *:nth-child(4) { animation-delay: 0.09s; }
+.screen > *:nth-child(5) { animation-delay: 0.12s; }
+.screen > *:nth-child(n + 6) { animation-delay: 0.15s; }
+.rise { animation: rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.pop { animation: pop 0.36s cubic-bezier(0.2, 0.9, 0.3, 1.3) backwards; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+
+/* Touch feedback. */
+.btn, .row, .tile, .chip, .seg, .tab { transition: transform 0.12s ease, background-color 0.2s ease, opacity 0.2s ease; }
+.btn:active, .tile:active, .chip:active { transform: scale(0.96); }
+.row:active { background: var(--fill-2); }
+.tab:active { transform: scale(0.92); }
+button.tile { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+
+.progress > div { transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.bars > div { transform-origin: bottom; animation: grow 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@keyframes grow { from { transform: scaleY(0); } to { transform: none; } }
+circle.arc { transition: stroke-dashoffset 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.backdrop { animation: fade 0.2s ease both; }
+.sheet { animation: sheet-up 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both; max-height: 85vh; overflow-y: auto; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+.toast { animation: toast-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 12px) scale(0.96); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+.glass > .badge, .flashcard .badge { align-self: flex-start; }

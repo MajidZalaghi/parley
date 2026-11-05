@@ -43,7 +43,7 @@ function overlap(a: Card | undefined, b: Card | undefined): number {
  * @param existing all cards currently stored (any deck)
  * @param mode    "file" archives terms missing from re-imported notes; "paste" never archives
  */
-export async function diffImport(notes: ParsedNote[], existing: Card[], mode: "file" | "paste", now: string): Promise<ImportResult> {
+export async function diffImport(notes: ParsedNote[], existing: Card[], mode: "file" | "paste", now: string, category = "BIM"): Promise<ImportResult> {
   const res: ImportResult = { upserts: [], added: [], changed: [], unchanged: [], archived: [], restored: [], renames: [], issues: [] };
   const byId = new Map(existing.filter((c) => c.deck === "bim").map((c) => [c.id, c]));
 
@@ -56,7 +56,7 @@ export async function diffImport(notes: ParsedNote[], existing: Card[], mode: "f
       list.push({
         card: {
           id: t.id, deck: "bim", kind: "term", origin: "vault", term: t.term, meaning: t.meaning, usage: t.usage,
-          clozeOk: t.clozeOk, source: n.source, createdDate: n.createdDate, archived: false,
+          clozeOk: t.clozeOk, source: n.source, createdDate: n.createdDate, archived: false, category: n.category ?? category,
         },
       });
       candidates.set(t.id, list);
@@ -65,7 +65,7 @@ export async function diffImport(notes: ParsedNote[], existing: Card[], mode: "f
       candidates.set(n.scenario.id, [{
         card: {
           id: n.scenario.id, deck: "bim", kind: "scenario", origin: "vault", context: n.scenario.context,
-          turns: n.scenario.turns, source: n.source, createdDate: n.createdDate, archived: false,
+          turns: n.scenario.turns, source: n.source, createdDate: n.createdDate, archived: false, category: n.category ?? category,
         },
       }]);
     }

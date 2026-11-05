@@ -7,7 +7,8 @@ import { h } from "./ui/dom";
 import { todayScreen } from "./ui/home";
 import { importScreen } from "./ui/import";
 import { inboxScreen } from "./ui/inbox";
-import { backupScreen, cardsScreen, moreScreen, reminderScreen, settingsScreen, statusScreen } from "./ui/more";
+import { backupScreen, cardsScreen, categoriesScreen, moreScreen, reminderScreen, settingsScreen, statusScreen } from "./ui/more";
+import { waitingScreen } from "./ui/waiting";
 import { notesScreen, practiceScreen } from "./ui/practice";
 import { progressScreen } from "./ui/progress";
 import { reviewScreen } from "./ui/review";
@@ -32,6 +33,8 @@ startApp({
   speak: speakScreen,
   reminder: reminderScreen,
   notes: notesScreen,
+  waiting: waitingScreen,
+  categories: categoriesScreen,
 });
 
 void requestPersistence();

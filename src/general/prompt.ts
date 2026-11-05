@@ -1,37 +1,44 @@
-// General English prompt template and reply matching (data-model §6.2, §6.3).
+// Universal card prompt (revision 5) and reply matching (data-model §6.2, §6.3).
+// The same prompt is sent to Gemini and copied for a local model (for example Qwen) or any chat,
+// so every route produces the same line format that parseCardLine reads.
 
 import { parseAiReply } from "../parser/parse";
 import type { Issue, ParsedTerm } from "../parser/types";
 import type { InboxEntry } from "../model/types";
 
-export const DEFAULT_PROMPT_TEMPLATE = `I am a BIM Coordinator learning professional British English. Make one
-spaced-repetition card for each word or phrase below.
+export const DEFAULT_PROMPT_TEMPLATE = `You make vocabulary flashcards for a Senior BIM Coordinator who works in English
+in the Netherlands and Ireland. Make one card for each word or phrase in the list.
 
-Output rules:
-- Write exactly one line per word, in the same order, and nothing else:
-  no heading, no numbering, no explanation, no code block.
-- Use exactly this format:
-  - \`term\` | Meaning: <short Persian explanation> | Usage: "<one sentence>"
-- term: copy the word exactly as I wrote it, inside backticks.
-- Meaning: natural, fluent Persian, at most 15 words. Keep technical terms
-  in English. If the word has several senses, use the sense in "seen in";
-  otherwise use the most common sense at work.
-- Usage: one natural British English sentence, 8 to 20 words, that a
-  professional could say in a meeting or at work. It must contain the term
-  exactly as written.
-- Do not use real company, client, project or person names.
+Write exactly one line per item, in the same order, and nothing else.
+No heading, no numbering, no notes, no code block.
 
-Words:
+Each line must have exactly this format:
+- \`TERM\` | Definition: DEFINITION | IPA: /IPA/ | Example: "EXAMPLE" | Meaning: MEANING
+
+Rules:
+- TERM: copy the word or phrase exactly as written in the list.
+- DEFINITION: a simple English definition, at most 20 words, for the field in [brackets].
+- IPA: British pronunciation in IPA between slashes.
+- EXAMPLE: one natural British English sentence of 8 to 20 words that a professional
+  would say at work in that field. It must contain the TERM.
+- MEANING: a short, natural Persian meaning, at most 12 words. Keep technical terms in English.
+- If "seen in" is given, use the sense of that sentence.
+- Never use real company, client, project or person names.
+
+Example of one correct line:
+- \`grab\` | Definition: to take something quickly | IPA: /ɡræb/ | Example: "Could you grab the latest model before the meeting?" | Meaning: سریع برداشتن یا گرفتن
+
+List:
 {{words}}`;
 
 export const MAX_BATCH = 20;
 
-export function buildPrompt(template: string, entries: readonly InboxEntry[]): string {
+export function buildPrompt(template: string, entries: readonly InboxEntry[], fallbackCategory = "General"): string {
   const list = entries
     .slice(0, MAX_BATCH)
-    .map((e, i) => `${i + 1}. ${e.word}${e.seenIn ? ` (seen in: "${e.seenIn.replace(/"/g, "'")}")` : ""}`)
+    .map((e, i) => `${i + 1}. ${e.word} [${e.category ?? fallbackCategory}]${e.seenIn ? ` (seen in: "${e.seenIn.replace(/"/g, "'")}")` : ""}`)
     .join("\n");
-  return template.includes("{{words}}") ? template.replace("{{words}}", list) : `${template}\n\nWords:\n${list}`;
+  return template.includes("{{words}}") ? template.replace("{{words}}", list) : `${template}\n\nList:\n${list}`;
 }
 
 export interface ReplyPreview {

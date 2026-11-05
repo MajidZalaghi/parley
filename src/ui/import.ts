@@ -3,10 +3,14 @@
 import { addAlias, importBim, type ImportInput } from "../app/service";
 import type { ImportResult } from "../bim/importDiff";
 import { splitNotes } from "../bim/split";
+import { loadSettings } from "../store/settings";
 import type { Screen } from "./app";
+import { categorySelect } from "./inbox";
 import { add, button, field, group, h, navBar, row, sectionLabel, set, toast } from "./dom";
 
-export const importScreen: Screen = (root) => {
+export const importScreen: Screen = async (root) => {
+  const s = await loadSettings();
+  const cat = categorySelect(s["categories"], s["categories"].includes("BIM") ? "BIM" : s["categories.default"], "Category for imported notes");
   const out = h("div", { attrs: { style: "display:flex;flex-direction:column;gap:12px" } });
 
   const fileInput = h("input", { attrs: { type: "file", multiple: "", accept: ".md,text/markdown,text/plain", hidden: "" } });
@@ -15,7 +19,7 @@ export const importScreen: Screen = (root) => {
     if (!files.length) return;
     // One file may hold several notes ("# Name" headings); see src/bim/split.ts.
     const inputs: ImportInput[] = (await Promise.all(files.map(async (f) => splitNotes(await f.text(), f.name.replace(/\.md$/i, ""))))).flat();
-    showResult(out, await importBim(inputs, "file"));
+    showResult(out, await importBim(inputs, "file", cat.value));
     fileInput.value = "";
   });
 
@@ -25,6 +29,7 @@ export const importScreen: Screen = (root) => {
   add(root,
     navBar("More", "#/more", "Import"),
     h("h1", { class: "large-title", text: "Import BIM notes" }),
+    field("Category", cat, "Used unless a note has its own “Category:” line."),
     group(row({ icon: "note", color: "blue", title: "Choose notes from Files", subtitle: "Only the English in Action section is read", onClick: () => fileInput.click() })),
     fileInput,
     sectionLabel("Or paste text"),
@@ -35,7 +40,7 @@ export const importScreen: Screen = (root) => {
         if (!paste.value.trim()) { toast("Paste the text first."); return; }
         const parts = splitNotes(paste.value, source.value.trim());
         if (parts.length === 1 && !source.value.trim()) { toast("Add the note name, or paste a pack whose notes start with “# Name”."); return; }
-        showResult(out, await importBim(parts, "paste"));
+        showResult(out, await importBim(parts, "paste", cat.value));
         paste.value = "";
       }, "btn primary big")),
     out,

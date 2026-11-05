@@ -1,7 +1,7 @@
 // Settings with defaults (data-model §9). Each key is stored as { key, value, updatedAt }.
 
 import { ALL_AI_FEATURES, type AiFeature } from "../ai/provider";
-import type { Deck, Mode } from "../model/types";
+import { DEFAULT_CATEGORIES, type Mode } from "../model/types";
 import type { Preset } from "../review/queue";
 import { DEFAULT_PROMPT_TEMPLATE } from "../general/prompt";
 import { db } from "./db";
@@ -12,16 +12,19 @@ export interface Settings {
   "fsrs.enableFuzz": boolean;
   "fsrs.enableShortTerm": boolean;
   "fsrs.weights": number[] | null;
-  "bim.modes": Mode[];
-  "general.modes": Mode[];
-  "bim.newPerDay": number;
-  "general.newPerDay": number;
+  /** Review modes for every category (revision 5). */
+  "review.modes": Mode[];
+  "limits.newPerDay": number;
+  "categories": string[];
+  /** Category a new Inbox word gets by default. */
+  "categories.default": string;
   "limits.reviewsPerDay": number;
   "rating.buttons": 2 | 4;
   "session.preset": Preset;
-  "session.lastDeck": Deck | "both";
+  "session.lastCategory": string;
   "privacy.blockedWords": string[];
-  "general.promptTemplate": string;
+  /** Universal card prompt (Gemini, a local model such as Qwen, or any chat). */
+  "cards.promptTemplate": string;
   "day.rolloverHour": number;
   "speech.voiceURI": string | null;
   "backup.reminderDays": number;
@@ -49,16 +52,16 @@ export const DEFAULTS: Settings = {
   "fsrs.enableFuzz": false,
   "fsrs.enableShortTerm": true,
   "fsrs.weights": null,
-  "bim.modes": ["cloze", "produce", "roleplay"],
-  "general.modes": ["cloze", "produce"],
-  "bim.newPerDay": 5,
-  "general.newPerDay": 3,
+  "review.modes": ["flashcard", "reverse", "roleplay"],
+  "limits.newPerDay": 10,
+  "categories": [...DEFAULT_CATEGORIES],
+  "categories.default": "General",
   "limits.reviewsPerDay": 80,
-  "rating.buttons": 2,
+  "rating.buttons": 4,
   "session.preset": "quick",
-  "session.lastDeck": "both",
+  "session.lastCategory": "All",
   "privacy.blockedWords": [],
-  "general.promptTemplate": DEFAULT_PROMPT_TEMPLATE,
+  "cards.promptTemplate": DEFAULT_PROMPT_TEMPLATE,
   "day.rolloverHour": 4,
   "speech.voiceURI": null,
   "backup.reminderDays": 7,
@@ -66,7 +69,7 @@ export const DEFAULTS: Settings = {
   "ai.model": "gemini-3.1-flash-lite",
   "ai.featuresOff": [],
   "ai.paidTierConfirmed": false,
-  "ai.maxOutputTokens.draft": 1500,
+  "ai.maxOutputTokens.draft": 3000,
   "ai.maxOutputTokens.feedback": 400,
   "ai.maxOutputTokens.sentence": 100,
   "ai.maxOutputTokens.explain": 400,

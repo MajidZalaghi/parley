@@ -3,23 +3,32 @@
 import { monthKey } from "../ai/client";
 import { makeGemini } from "../ai/gemini";
 import { ALL_AI_FEATURES, type AiFeature } from "../ai/provider";
-import { applyRestore, archiveCard, confirmCard, editGeneral, exportBackup, markBackupDone, prepareRestore, snapshot, APP_VERSION, type Resolution } from "../app/service";
+import { applyRestore, archiveCard, confirmCard, editGeneral, eraseAllData, exportBackup, isLeech, markBackupDone, prepareRestore, snapshot, updateCardExtras, APP_VERSION, type Resolution } from "../app/service";
+import { addCategory, deleteCategory, renameCategory } from "../app/categories";
+import { runAi } from "../ai/client";
+import { parseAiReply } from "../parser/parse";
+import { slugify } from "../parser/text";
 import type { Conflict } from "../backup/merge";
-import type { Card, Mode } from "../model/types";
+import { ALL_MODES, categoryOf, type Card, type Mode } from "../model/types";
 import { copyText, englishVoices, isStandalone, requestPersistence, saveFile, storageStatus } from "../platform/platform";
 import { getAiUsage, getApiKey, getMeta, setApiKey } from "../store/db";
 import { enabledAiFeatures, invalidateSettings, loadSettings, setSetting, type Settings } from "../store/settings";
+import { DEFAULT_PROMPT_TEMPLATE } from "../general/prompt";
 import type { Screen } from "./app";
 import { runDraftingTest } from "./diagnose";
-import { add, button, fa, field, group, h, largeHeader, navBar, row, sectionLabel, set, toast, toggle } from "./dom";
+import { add, button, chips, fa, field, group, h, largeHeader, navBar, row, sectionLabel, set, sheet, spinnerLine, toast, toggle } from "./dom";
+import { aiButton, aiError } from "./ai";
+import { categorySelect } from "./inbox";
+import { persianToggle } from "./review";
 
 export const moreScreen: Screen = async (root) => {
   const last = await getMeta<string>("lastBackupAt");
   add(root,
     largeHeader("More"),
     group(
-      row({ icon: "import", color: "blue", title: "Import BIM notes", subtitle: "From Files or paste", href: "#/import" }),
-      row({ icon: "cards", color: "orange", title: "Cards", subtitle: "Browse, edit General cards", href: "#/cards" }),
+      row({ icon: "import", color: "blue", title: "Import BIM notes", subtitle: "A pack file, notes from Files, or paste", href: "#/import" }),
+      row({ icon: "cards", color: "orange", title: "Cards", subtitle: "Browse, edit, add definitions", href: "#/cards" }),
+      row({ icon: "note", color: "green", title: "Categories", subtitle: "Add, rename or remove", href: "#/categories" }),
     ),
     group(
       row({ icon: "download", color: "yellow", title: "Backup and restore", subtitle: last ? `Last backup ${new Date(last).toLocaleDateString("en-GB")}` : "No backup yet", href: "#/backup" }),
@@ -34,51 +43,142 @@ export const moreScreen: Screen = async (root) => {
 
 // ---------- Cards ----------
 
+const ENRICH_INSTRUCTIONS = "Follow the output rules exactly. Output only card lines.";
+
 export const cardsScreen: Screen = async (root, go) => {
   const snap = await snapshot();
+  const s = snap.settings;
   const list = h("div", { class: "group" });
   const filter = h("input", { attrs: { type: "search", placeholder: "Search", "aria-label": "Search cards" } });
+  let cat = "All";
   const render = () => {
     const q = filter.value.trim().toLowerCase();
     const cards = snap.cards
-      .filter((c) => !c.archived && (!q || (c.term ?? c.context ?? c.id).toLowerCase().includes(q)))
-      .sort((a, b) => a.deck.localeCompare(b.deck) || (a.term ?? a.id).localeCompare(b.term ?? b.id));
-    set(list, ...cards.map((c) => cardRow(c, () => go("cards"))));
+      .filter((c) => !c.archived && (cat === "All" || (cat === "Leeches" ? isLeech(c, snap.states) : categoryOf(c) === cat)))
+      .filter((c) => !q || (c.term ?? c.context ?? c.id).toLowerCase().includes(q))
+      .sort((a, b) => categoryOf(a).localeCompare(categoryOf(b)) || (a.term ?? a.id).localeCompare(b.term ?? b.id));
+    set(list, ...cards.slice(0, 300).map((c) => cardRow(c, s["categories"], isLeech(c, snap.states), () => go("cards"))));
     if (!cards.length) set(list, row({ title: "No cards", subtitle: q ? "Try another search" : "Import a note or add words to the Inbox" }));
   };
   filter.addEventListener("input", render);
-  add(root, navBar("More", "#/more", "Cards"), filter, list);
+
+  // Vault cards have no English definition or IPA; Gemini can add them (stored in the app, never in the vault).
+  const missing = snap.cards.filter((c) => !c.archived && c.kind === "term" && c.term && (!c.definition || !c.ipa));
+  const enrichBox = h("div", { attrs: { style: "display:flex;flex-direction:column;gap:8px" } });
+  const enrich = async () => {
+    const batch = missing.slice(0, 20);
+    const lines = batch.map((c, i) => `${i + 1}. ${c.term} [${categoryOf(c)}] (example to copy: "${(c.usage ?? "").replace(/"/g, "'")}")`).join("\n");
+    const input = [
+      "For each item, write one card line in exactly this format and nothing else:",
+      '- `TERM` | Definition: simple English definition, at most 20 words, for the field in [brackets] | IPA: /British IPA/ | Example: "copy the given example exactly"',
+      "Copy TERM exactly. No numbering, no notes.",
+      "",
+      lines,
+    ].join("\n");
+    set(enrichBox, spinnerLine(`Adding definitions and IPA for ${batch.length} cards…`));
+    const r = await runAi({ feature: "draft", instructions: ENRICH_INSTRUCTIONS, input, maxOutputTokens: s["ai.maxOutputTokens.draft"] });
+    if (!r.ok) { set(enrichBox, aiError(r)); return; }
+    const { terms } = parseAiReply(r.value, s["privacy.blockedWords"]);
+    let n = 0;
+    for (const t of terms) {
+      const c = batch.find((x) => slugify(x.term ?? "") === t.id);
+      if (c && (t.definition || t.ipa)) { await updateCardExtras(c, { definition: c.definition || t.definition, ipa: c.ipa || t.ipa }); n++; }
+    }
+    toast(`Added definitions or IPA to ${n} card${n === 1 ? "" : "s"}.`);
+    go("cards");
+  };
+
+  add(root,
+    navBar("More", "#/more", "Cards"),
+    chips([["All", "All"], ...s["categories"].map((c) => [c, c] as [string, string]), ["Leeches", "Leeches"]], cat, (v) => { cat = v; render(); }),
+    filter,
+    missing.length
+      ? h("section", { class: "glass" },
+          h("p", { class: "muted small", text: `${missing.length} card${missing.length === 1 ? "" : "s"} without an English definition or IPA (for example cards from the vault).` }),
+          aiButton(`Add definitions & IPA with Gemini${missing.length > 20 ? " (20 at a time)" : ""}`, "draft", () => enrich(), "btn ai"),
+          enrichBox)
+      : null,
+    list);
   render();
 };
 
-function cardRow(c: Card, refresh: () => void): HTMLElement {
+function cardRow(c: Card, categories: string[], leech: boolean, refresh: () => void): HTMLElement {
   const title = c.kind === "scenario" ? `Scenario · ${c.source}` : (c.term ?? c.id);
-  const sub = `${c.deck === "bim" ? "BIM" : "General"}${c.origin === "ai-draft" ? " · AI draft" : ""}`;
+  const sub = `${categoryOf(c)}${c.origin === "ai-draft" ? " · AI draft" : ""}${leech ? " · Leech" : ""}`;
   const d = h("details", { class: "row" }, h("summary", {}, h("span", { class: "label" }, h("b", { text: title }), h("small", { text: sub }))));
+  const cat = categorySelect(categories, categoryOf(c));
   if (c.kind === "term") {
-    add(d, fa(c.meaning ?? ""), h("p", { class: "sentence", text: c.usage ?? "" }));
+    const input = (v: string, label: string, attrs: Record<string, string> = {}) => { const i = h("input", { attrs: { type: "text", "aria-label": label, ...attrs } }); i.value = v; return i; };
+    const definition = input(c.definition ?? "", "Definition");
+    const ipa = input(c.ipa ?? "", "IPA");
+    if (c.deck === "general") {
+      const term = input(c.term ?? "", "Term");
+      const meaning = input(c.meaning ?? "", "Persian", { dir: "rtl", lang: "fa" });
+      const usage = h("textarea", { attrs: { rows: "2", "aria-label": "Example" } }); usage.value = c.usage ?? "";
+      add(d, field("Word or phrase", term), field("Definition", definition), field("IPA", ipa), field("Example", usage), field("Persian", meaning), field("Category", cat),
+        h("div", { class: "row-btns" },
+          button("Save", async () => {
+            await editGeneral(c, { term: term.value.trim(), meaning: meaning.value.trim(), usage: usage.value.trim(), definition: definition.value.trim(), ipa: ipa.value.trim(), category: cat.value });
+            toast("Saved."); refresh();
+          }, "btn small primary"),
+          c.origin === "ai-draft" ? button("Confirm", async () => { await confirmCard(c); refresh(); }, "btn small") : null,
+          button("Delete", async () => { if (confirm("Archive this card? Its history is kept.")) { await archiveCard(c); refresh(); } }, "btn small ghost")));
+    } else {
+      add(d, h("p", { class: "sentence", text: c.usage ?? "" }), persianToggle(c.meaning ?? ""),
+        field("Definition", definition), field("IPA", ipa), field("Category", cat),
+        h("p", { class: "muted small", text: `Word, example and Persian come from “${c.source}”; edit them in Obsidian and import again.` }),
+        h("div", { class: "row-btns" }, button("Save", async () => { await updateCardExtras(c, { definition: definition.value.trim(), ipa: ipa.value.trim(), category: cat.value }); toast("Saved."); refresh(); }, "btn small primary")));
+    }
     for (const x of c.extraUsages) add(d, h("p", { class: "muted small", text: `${x.kind === "ai-tip" ? "Tip" : "AI"}: ${x.text}` }));
   } else {
-    add(d, fa(c.context ?? "", "muted small"), ...(c.turns ?? []).map((t) => h("p", { class: "small", text: `${t.speaker}: ${t.text}` })));
-  }
-  if (c.deck === "general" && c.kind === "term") {
-    const term = h("input", { attrs: { type: "text", "aria-label": "Term" } }); term.value = c.term ?? "";
-    const meaning = h("input", { attrs: { type: "text", dir: "rtl", lang: "fa", "aria-label": "Meaning" } }); meaning.value = c.meaning ?? "";
-    const usage = h("textarea", { attrs: { rows: "2", "aria-label": "Usage" } }); usage.value = c.usage ?? "";
-    add(d, field("Term", term), field("Meaning", meaning), field("Usage", usage),
+    add(d, fa(c.context ?? "", "muted small"), ...(c.turns ?? []).map((t) => h("p", { class: "small", text: `${t.speaker}: ${t.text}` })),
+      field("Category", cat),
       h("div", { class: "row-btns" },
-        button("Save", async () => { await editGeneral(c, { term: term.value.trim(), meaning: meaning.value.trim(), usage: usage.value.trim() }); toast("Saved."); refresh(); }, "btn small primary"),
+        button("Save", async () => { await updateCardExtras(c, { category: cat.value }); toast("Saved."); refresh(); }, "btn small primary"),
         c.origin === "ai-draft" ? button("Confirm", async () => { await confirmCard(c); refresh(); }, "btn small") : null,
-        button("Delete", async () => { if (confirm("Archive this card? Its history is kept.")) { await archiveCard(c); refresh(); } }, "btn small ghost")));
-  } else if (c.deck === "general") {
-    add(d, h("div", { class: "row-btns" },
-      c.origin === "ai-draft" ? button("Confirm", async () => { await confirmCard(c); refresh(); }, "btn small") : null,
-      button("Delete", async () => { if (confirm("Archive this scenario? Its history is kept.")) { await archiveCard(c); refresh(); } }, "btn small ghost")));
-  } else {
-    add(d, h("p", { class: "muted small", text: `From “${c.source}”. Edit it in Obsidian and import again.` }));
+        c.deck === "general" ? button("Delete", async () => { if (confirm("Archive this scenario? Its history is kept.")) { await archiveCard(c); refresh(); } }, "btn small ghost") : null));
   }
   return d;
 }
+
+// ---------- Categories ----------
+
+export const categoriesScreen: Screen = async (root, go) => {
+  invalidateSettings();
+  const s = await loadSettings();
+  const snap = await snapshot();
+  const name = h("input", { attrs: { type: "text", placeholder: "New category", "aria-label": "New category" } });
+  const def = categorySelect(s["categories"], s["categories.default"], "Default category");
+  def.addEventListener("change", () => void setSetting("categories.default", def.value));
+  const rows = s["categories"].map((c) => {
+    const n = snap.cards.filter((x) => !x.archived && categoryOf(x) === c).length;
+    return row({
+      title: c, value: `${n} card${n === 1 ? "" : "s"}`,
+      onClick: () => {
+        const input = h("input", { attrs: { type: "text", "aria-label": "Category name" } }); input.value = c;
+        const others = s["categories"].filter((x) => x !== c);
+        const moveTo = categorySelect(others, others.includes("General") ? "General" : others[0] ?? "", "Move cards to");
+        const close = sheet(
+          h("h2", { class: "title", text: c }),
+          field("Name", input),
+          button("Rename", async () => { const err = await renameCategory(c, input.value); if (err) { toast(err); return; } close(); go("categories"); }, "btn primary big"),
+          others.length ? field("When deleting, move its cards to", moveTo) : null,
+          others.length
+            ? button("Delete category", async () => {
+                if (!confirm(`Delete “${c}”? Its ${n} cards move to “${moveTo.value}”.`)) return;
+                const err = await deleteCategory(c, moveTo.value); if (err) { toast(err); return; } close(); go("categories");
+              }, "btn again big")
+            : null,
+          button("Cancel", () => close(), "btn big"));
+      },
+    });
+  });
+  add(root,
+    navBar("More", "#/more", "Categories"),
+    group(...rows),
+    h("section", { class: "glass" }, name, button("Add category", async () => { const err = await addCategory(name.value); if (err) { toast(err); return; } go("categories"); }, "btn primary")),
+    field("Default for new words", def));
+};
 
 // ---------- Backup ----------
 
@@ -172,8 +272,8 @@ export const settingsScreen: Screen = async (root, go) => {
   const blocked = h("textarea", { attrs: { rows: "3", placeholder: "One per line: client names, project names…", "aria-label": "Blocked words" } });
   blocked.value = s["privacy.blockedWords"].join("\n");
   blocked.addEventListener("change", () => void setSetting("privacy.blockedWords", blocked.value.split("\n").map((x) => x.trim()).filter(Boolean)));
-  const template = h("textarea", { attrs: { rows: "8", "aria-label": "Prompt template" } }); template.value = s["general.promptTemplate"];
-  template.addEventListener("change", () => void setSetting("general.promptTemplate", template.value));
+  const template = h("textarea", { attrs: { rows: "8", "aria-label": "Prompt template" } }); template.value = s["cards.promptTemplate"];
+  template.addEventListener("change", () => void setSetting("cards.promptTemplate", template.value));
   const voices = englishVoices();
   const voiceSel = h("select", { attrs: { "aria-label": "Voice" } });
   add(voiceSel, h("option", { text: "Automatic (en-GB first)", attrs: { value: "" } }), ...voices.map((v) => h("option", { text: `${v.name} (${v.lang})`, attrs: { value: v.voiceURI } })));
@@ -213,19 +313,20 @@ export const settingsScreen: Screen = async (root, go) => {
     group(...featureRows),
     group(row({ title: "Monthly request cap", trailing: numberInput(s["ai.monthlyRequestCap"], (v) => setSetting("ai.monthlyRequestCap", v)) })),
     sectionLabel("Review"),
-    group(...modeRows("BIM", "bim.modes", s["bim.modes"], ["cloze", "produce", "recognise", "roleplay"])),
-    group(...modeRows("General", "general.modes", s["general.modes"], ["cloze", "produce", "recognise"])),
+    group(...modeRows(s["review.modes"])),
     group(
-      row({ title: "New BIM items per day", trailing: numberInput(s["bim.newPerDay"], (v) => setSetting("bim.newPerDay", v)) }),
-      row({ title: "New General items per day", trailing: numberInput(s["general.newPerDay"], (v) => setSetting("general.newPerDay", v)) }),
+      row({ title: "New items per day", trailing: numberInput(s["limits.newPerDay"], (v) => setSetting("limits.newPerDay", v)) }),
       row({ title: "Reviews per day", trailing: numberInput(s["limits.reviewsPerDay"], (v) => setSetting("limits.reviewsPerDay", v)) }),
       row({ title: "Four rating buttons", trailing: toggle(s["rating.buttons"] === 4, (v) => setSetting("rating.buttons", v ? 4 : 2), "Four rating buttons") }),
       row({ title: "Day starts at hour", trailing: numberInput(s["day.rolloverHour"], (v) => setSetting("day.rolloverHour", Math.min(23, Math.max(0, v)))) })),
     field("Voice", voiceSel, voices.length ? undefined : "No English voice found on this device."),
     sectionLabel("Privacy"),
     field("Blocked words", blocked, "Checked on import, Inbox and before every AI request."),
-    sectionLabel("AI prompt for drafting cards"),
+    sectionLabel("Card prompt (Gemini, Qwen or any chat)"),
     template,
+    button("Restore the default prompt", async () => { await setSetting("cards.promptTemplate", DEFAULT_PROMPT_TEMPLATE); toast("Default prompt restored."); go("settings"); }, "btn small"),
+    sectionLabel("Erase"),
+    group(row({ icon: "warn", color: "red", title: "Erase all data", subtitle: "Cards, reviews, waiting list and settings", onClick: () => eraseSheet() })),
   );
 };
 
@@ -236,13 +337,38 @@ function numberInput(value: number, onChange: (v: number) => unknown): HTMLInput
   return i;
 }
 
-function modeRows(deck: string, key: "bim.modes" | "general.modes", current: Mode[], options: Mode[]): HTMLElement[] {
-  const names: Record<Mode, string> = { cloze: "Cloze", produce: "Meaning → Term", recognise: "Term → Meaning", roleplay: "Role-play" };
+function modeRows(current: Mode[]): HTMLElement[] {
+  const names: Record<Mode, [string, string]> = {
+    flashcard: ["Flashcard", "Word first, then definition, IPA, example"],
+    reverse: ["Reverse", "Definition first, you say the word"],
+    cloze: ["Fill the gap", "Example with the word blanked out"],
+    produce: ["Persian → word", "Persian meaning first"],
+    recognise: ["Word → Persian", "Earlier mode"],
+    roleplay: ["Role-play", "Meeting scenarios"],
+  };
   const on = new Set(current);
-  return options.map((m) => row({
-    title: `${deck} · ${names[m]}`,
-    trailing: toggle(on.has(m), (v) => { v ? on.add(m) : on.delete(m); return setSetting(key, options.filter((o) => on.has(o))); }, `${deck} ${names[m]}`),
+  return ALL_MODES.map((m) => row({
+    title: names[m][0], subtitle: names[m][1],
+    trailing: toggle(on.has(m), (v) => { v ? on.add(m) : on.delete(m); return setSetting("review.modes", ALL_MODES.filter((o) => on.has(o))); }, names[m][0]),
   }));
+}
+
+function eraseSheet(): void {
+  const word = h("input", { attrs: { type: "text", placeholder: "Type ERASE", autocapitalize: "characters", "aria-label": "Type ERASE to confirm" } });
+  let keepKey = true;
+  const close = sheet(
+    h("h2", { class: "title", text: "Erase all data?" }),
+    h("p", { class: "muted", text: "This deletes every card, review, waiting word, category change and setting on this phone. It cannot be undone. Export a backup first if you might need it." }),
+    group(row({ title: "Keep my Gemini key", trailing: toggle(true, (v) => { keepKey = v; }, "Keep my Gemini key") })),
+    word,
+    button("Erase everything", async () => {
+      if (word.value.trim() !== "ERASE") { toast("Type ERASE to confirm."); return; }
+      await eraseAllData(keepKey);
+      close();
+      toast("All data erased.");
+      location.hash = "#/today";
+    }, "btn again big"),
+    button("Cancel", () => close(), "btn big"));
 }
 
 // ---------- Status ----------
